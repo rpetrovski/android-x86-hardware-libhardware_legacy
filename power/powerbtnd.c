@@ -22,7 +22,7 @@
 #include <linux/uinput.h>
 #include <cutils/properties.h>
 
-const int MAX_POWERBTNS = 3;
+const int MAX_POWERBTNS = 30;
 
 int openfds(struct pollfd pfds[])
 {
@@ -49,7 +49,13 @@ int openfds(struct pollfd pfds[])
 			}
 
 			// TODO: parse /etc/excluded-input-devices.xml
-			if (!strcmp(name, "Power Button")) {
+			if (!strcmp(name, "Power Button") ||
+// other devices I'm planning to handle
+                            !strcmp(name, "Dell WMI hotkeys") ||
+                            !strcmp(name, "DELL Wireless hotkeys") ||
+                            !strcmp(name, "Sleep Button") ||
+			    !strcmp(name, "Dell Venue 11 Pro Tablet") ||
+			    !strcmp(name, "Lid Switch")) {
 				ALOGI("open %s(%s) ok fd=%d", de->d_name, name, fd);
 				pfds[cnt].events = POLLIN;
 				pfds[cnt++].fd = fd;
@@ -57,6 +63,10 @@ int openfds(struct pollfd pfds[])
 					continue;
 				else
 					break;
+			}
+			else
+			{
+				ALOGI("skip %s(%s) ok fd=%d", de->d_name, name, fd);
 			}
 			close(fd);
 		}
@@ -81,10 +91,23 @@ void send_power(int ufd, int down)
 
 void simulate_powerkey(int ufd, int longpress)
 {
-	send_power(ufd, 1);
 	if (longpress)
+	{
+		send_power(ufd, 1);
 		sleep(2);
-	send_power(ufd, 0);
+		send_power(ufd, 0);
+// for some reason --longpress has same effect as no --longpress
+//		system("input keyevent --longpress 26");
+	}
+	else
+	{
+		system("input keyevent 26");
+	}
+// this always is treated as longpress by framework, so, the above is a way to make it work
+//	send_power(ufd, 1);
+//	if (longpress)
+//		sleep(2);
+//	send_power(ufd, 0);
 }
 
 int main()
@@ -92,7 +115,7 @@ int main()
 	struct pollfd pfds[MAX_POWERBTNS];
 	int cnt = openfds(pfds);
 	int timeout = -1;
-	int longpress = 1;
+	int shortpress = 1;
 	char prop[PROPERTY_VALUE_MAX];
 
 	int ufd = open("/dev/uinput", O_WRONLY | O_NDELAY);
@@ -121,9 +144,9 @@ int main()
 		}
 		if (pollres == 0) {
 			ALOGI("timeout, send one power key");
-			simulate_powerkey(ufd, 0);
+			simulate_powerkey(ufd, 1);
 			timeout = -1;
-			longpress = 1;
+			shortpress = 1;
 			continue;
 		}
 		for (i = 0; i < cnt; ++i) {
@@ -134,18 +157,19 @@ int main()
 					ALOGW("insufficient input data(%zd)? fd=%d", res, pfds[i].fd);
 					continue;
 				}
+
 				ALOGD("type=%d scancode=%d value=%d from fd=%d", iev.type, iev.code, iev.value, pfds[i].fd);
 				if (iev.type == EV_KEY && iev.code == KEY_POWER && !iev.value) {
 					if (prop[0] != '1' || timeout > 0) {
-						simulate_powerkey(ufd, longpress);
+						simulate_powerkey(ufd, !shortpress);
 						timeout = -1;
 					} else {
-						timeout = 1000; // one second
+						timeout = 2000; // 2 seconds
 					}
 				} else if (iev.type == EV_SYN && iev.code == SYN_REPORT && iev.value) {
 					ALOGI("got a resuming event");
-					longpress = 0;
-					timeout = 1000; // one second
+					shortpress = 0;
+					timeout = 2000; // 2 seconds
 				}
 			}
 		}
